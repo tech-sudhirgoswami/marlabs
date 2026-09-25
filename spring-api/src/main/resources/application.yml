@@ -1,0 +1,6 @@
+server:
+  port: 8080
+
+python:
+  service-url: ${PYTHON_SERVICE_URL:http://localhost:8001}
+  timeout-ms: ${PYTHON_TIMEOUT_MS:5000}
