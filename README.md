@@ -168,6 +168,30 @@ For `request-03`, the two different stated amounts remain unresolved and are not
 For `request-06`, `duplicate_of` is `request-01`.
 For `request-08`, the item is `FAILED` because it is zero-byte/unreadable; other items continue.
 
+## Error shape and codes
+
+Errors are returned as `{"error": {"code": "<STABLE_CODE>", "message": "<safe message>"}}` with a non-2xx status. Item-level failures inside `/batches` use the same `error` field inside the result object with HTTP 200 for the batch.
+
+| Code | HTTP | Where |
+|---|---|---|
+| `MISSING_CALLER`, `UNKNOWN_CALLER` | 400 | `X-Caller-Id` missing or not in the caller directory |
+| `INVALID_QUESTION` | 400 | `/answer` with blank question |
+| `INVALID_AS_OF` | 400 | `as_of` missing or not `YYYY-MM-DD` |
+| `INVALID_METADATA` | 400 | `/batches` metadata missing/invalid |
+| `DUPLICATE_MANIFEST_IDENTIFIER` | 400 | repeated `document_id` or `filename` in manifest |
+| `FILE_MANIFEST_MISMATCH` | 400 | missing/extra file parts or filename mismatch |
+| `INVALID_REQUEST` | 400 | generic request processing failure |
+| `PYTHON_SERVICE_UNAVAILABLE` | 502 | Python dependency failure (provider timeout/unavailable) |
+| `MALFORMED_MODEL_OUTPUT` | 502 | provider returned an unusable shape |
+| `EMPTY_FILE` | item | zero-byte upload |
+| `UNREADABLE_FILE` | item | empty/unreadable document text |
+| `INVALID_UTF8` | item | non-UTF-8 TXT upload |
+| `PDF_EXTRACTION_FAILED` | item | text-based PDF could not be parsed |
+| `UNSUPPORTED_FILE_TYPE` | item | extension other than `.txt`/`.pdf` |
+| `PROCESSING_FAILED` | item | unexpected item-level failure |
+
+Policy findings (`status: ANSWERED|INSUFFICIENT_EVIDENCE|CONFLICT`) are never HTTP failures; non-2xx responses are reserved for request/dependency/processing failures.
+
 ## Policy decision behavior
 
 Only policy records that are:
