@@ -1,5 +1,4 @@
 import json
-import os
 import re
 from datetime import date
 from pathlib import Path
@@ -9,12 +8,20 @@ from typing import Dict, List, Optional
 POLICY_PATH = Path(__file__).resolve().parents[2] / "data" / "policies" / "policies.json"
 
 BENEFIT_PATTERNS = [
-    ("certification", re.compile(r"certification|cloud certification", re.I)),
-    ("home-office", re.compile(r"home[- ]office|desk and chair|home office", re.I)),
+    ("certification", re.compile(r"certification", re.I)),
+    ("home-office", re.compile(r"home[- ]office|desk and chair", re.I)),
     ("travel", re.compile(r"rail travel|travel", re.I)),
     ("training", re.compile(r"external training|training", re.I)),
     ("wellness", re.compile(r"wellness|gym membership", re.I)),
 ]
+
+TERMS = {
+    "certification": ("certification",),
+    "home-office": ("home-office", "home office"),
+    "travel": ("rail travel", "travel"),
+    "training": ("training",),
+    "wellness": ("wellness", "gym"),
+}
 
 
 class PolicyStore:
@@ -23,15 +30,15 @@ class PolicyStore:
 
     def eligible(self, caller: Dict, as_of: date) -> List[Dict]:
         result = []
-        for p in self.records:
-            if p["approval_state"] != "Approved":
+        for record in self.records:
+            if record["approval_state"] != "Approved":
                 continue
-            if p["tenant"] != caller["tenant"] or p["role"] != caller["role"]:
+            if record["tenant"] != caller["tenant"] or record["role"] != caller["role"]:
                 continue
-            start = date.fromisoformat(p["effective_from"])
-            end = date.fromisoformat(p["effective_to"])
+            start = date.fromisoformat(record["effective_from"])
+            end = date.fromisoformat(record["effective_to"])
             if start <= as_of < end:
-                result.append(p)
+                result.append(record)
         return result
 
     def infer_benefit(self, text: str) -> Optional[str]:
@@ -44,65 +51,47 @@ class PolicyStore:
         benefit = self.infer_benefit(text)
         if not benefit:
             return []
-        terms = {
-            "certification": ("certification",),
-            "home-office": ("home-office", "home office"),
-            "travel": ("rail travel", "travel"),
-            "training": ("training",),
-            "wellness": ("wellness", "gym"),
-        }[benefit]
-        matches = []
-        for p in eligible_records:
-            hay = (p["text"] + " " + p["id"]).lower()
-            if any(t in hay for t in terms):
-                matches.append(p)
-        return matches
+        return [
+            record
+            for record in eligible_records
+            if any(term in f"{record['text']} {record['id']}".lower() for term in TERMS[benefit])
+        ]
 
     def answer(self, question: str, caller: Dict, as_of: date):
-        eligible = self.eligible(caller, as_of)
-        relevant = self.relevant(question, eligible)
-
-        # Ignore the injection example as an answer source for unrelated benefits.
-        # More importantly, the only records allowed to reach generation are already
-        # tenant/role/date/approval eligible.
+        relevant = self.relevant(question, self.eligible(caller, as_of))
         if not relevant:
             return {"status": "INSUFFICIENT_EVIDENCE", "answer": None, "citations": []}
 
-        normalized_quotes = [r["text"] for r in relevant]
-        unique_quotes = list(dict.fromkeys(normalized_quotes))
+        # Contradictory applicable limits are reported as a conflict; no
+        # precedence rule is supplied, so one is not invented.
+        quotes = list(dict.fromkeys(record["text"] for record in relevant))
+        amounts = set()
+        for quote in quotes:
+            match = re.search(r"INR\s*([0-9]+)", quote)
+            if match:
+                amounts.add(match.group(1))
+        if len(amounts) > 1:
+            return {
+                "status": "CONFLICT",
+                "answer": None,
+                "citations": [{"chunk_id": r["id"], "quote": r["text"]} for r in relevant],
+            }
 
-        if len(unique_quotes) > 1:
-            # Only treat simultaneous contradictory numeric allowance/limit records as conflict.
-            numeric_values = []
-            for q in unique_quotes:
-                m = re.search(r"INR\s*([0-9]+)", q)
-                numeric_values.append(m.group(1) if m else None)
-            if len(set(v for v in numeric_values if v is not None)) > 1:
-                return {
-                    "status": "CONFLICT",
-                    "answer": None,
-                    "citations": [{"chunk_id": r["id"], "quote": r["text"]} for r in relevant],
-                }
-
-        r = relevant[0]
+        record = relevant[0]
         benefit = self.infer_benefit(question)
         if benefit == "certification":
-            answer = re.sub(r"^", "The applicable annual certification reimbursement limit is ", r["text"])
-            # Use the source sentence as the evidence; produce a concise supported answer.
-            m = re.search(r"(INR\s*[0-9]+)", r["text"])
-            answer = f"The applicable annual certification reimbursement limit is {m.group(1)}."
+            amount = re.search(r"INR\s*[0-9]+", record["text"]).group(0)
+            result = f"The applicable annual certification reimbursement limit is {amount}."
         elif benefit == "home-office":
-            m = re.search(r"(INR\s*[0-9]+)", r["text"])
-            answer = f"The annual home-office allowance is {m.group(1)}."
-        elif benefit == "travel":
-            answer = r["text"]
-        elif benefit == "training":
-            answer = r["text"]
+            amount = re.search(r"INR\s*[0-9]+", record["text"]).group(0)
+            result = f"The annual home-office allowance is {amount}."
+        elif benefit in ("travel", "training"):
+            result = record["text"]
         else:
             return {"status": "INSUFFICIENT_EVIDENCE", "answer": None, "citations": []}
 
         return {
             "status": "ANSWERED",
-            "answer": answer,
-            "citations": [{"chunk_id": r["id"], "quote": r["text"]}],
+            "answer": result,
+            "citations": [{"chunk_id": record["id"], "quote": record["text"]}],
         }

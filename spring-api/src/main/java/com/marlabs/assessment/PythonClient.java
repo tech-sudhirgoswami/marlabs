@@ -3,10 +3,10 @@ package com.marlabs.assessment;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import org.springframework.beans.factory.annotation.Value;
-import org.springframework.http.*;
+import org.springframework.http.MediaType;
+import org.springframework.http.ResponseEntity;
 import org.springframework.stereotype.Component;
-import org.springframework.util.LinkedMultiValueMap;
-import org.springframework.util.MultiValueMap;
+import org.springframework.web.client.HttpStatusCodeException;
 import org.springframework.web.client.RestClient;
 
 import java.util.Base64;
@@ -63,7 +63,7 @@ public class PythonClient {
             String text = n.get("text").asText();
             List<Double> amounts = mapper.convertValue(n.get("numeric_amounts"), mapper.getTypeFactory().constructCollectionType(List.class, Double.class));
             return new ProcessedDocument(text, extracted, evidence, amounts);
-        } catch (org.springframework.web.client.HttpStatusCodeException e) {
+        } catch (HttpStatusCodeException e) {
             String code = "PROCESSING_FAILED";
             try {
                 JsonNode n = mapper.readTree(e.getResponseBodyAsString());

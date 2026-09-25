@@ -6,7 +6,13 @@ import org.springframework.web.multipart.MultipartFile;
 import java.security.MessageDigest;
 import java.time.LocalDate;
 import java.time.format.DateTimeParseException;
-import java.util.*;
+import java.util.ArrayList;
+import java.util.HashMap;
+import java.util.HashSet;
+import java.util.HexFormat;
+import java.util.List;
+import java.util.Map;
+import java.util.Set;
 import java.util.stream.Collectors;
 
 @Service
@@ -35,7 +41,7 @@ public class AssessmentService {
         validateManifest(metadata, files);
 
         Map<String, MultipartFile> byFilename = files.stream()
-            .collect(Collectors.toMap(MultipartFile::getOriginalFilename, f -> f, (a,b) -> a));
+            .collect(Collectors.toMap(MultipartFile::getOriginalFilename, f -> f, (a, b) -> a));
 
         List<ApiModels.BatchItem> results = new ArrayList<>();
         Map<String, String> digestToDocumentId = new HashMap<>();
@@ -48,9 +54,9 @@ public class AssessmentService {
                 String digest = sha256(bytes);
                 duplicateOf = digestToDocumentId.putIfAbsent(digest, doc.document_id());
 
-                PythonClient.ProcessedDocument p = pythonClient.process(doc.filename(), bytes);
+                PythonClient.ProcessedDocument processed = pythonClient.process(doc.filename(), bytes);
 
-                boolean ambiguousAmount = p.numericAmounts().stream().distinct().count() > 1;
+                boolean ambiguousAmount = processed.numericAmounts().stream().distinct().count() > 1;
                 List<String> issues = new ArrayList<>();
                 issues.add("Human review is mandatory for every submitted request.");
                 issues.add("The annual policy limit does not establish remaining balance, expense eligibility, or payable amount.");
@@ -58,16 +64,16 @@ public class AssessmentService {
                 if (ambiguousAmount) {
                     issues.add("Multiple different amounts are stated in the request; the amount remains unresolved.");
                 }
-                if (p.extracted().benefit() == null) {
+                if (processed.extracted().benefit() == null) {
                     issues.add("Requested benefit could not be identified from the submitted text.");
                 }
-                if (p.extracted().reference() == null) {
+                if (processed.extracted().reference() == null) {
                     issues.add("Reference is missing or unresolved.");
                 }
 
                 ApiModels.PolicyResult policy = null;
-                if (p.extracted().benefit() != null) {
-                    String policyQuestion = policyQuestionFor(p.extracted().benefit());
+                if (processed.extracted().benefit() != null) {
+                    String policyQuestion = policyQuestionFor(processed.extracted().benefit());
                     try {
                         ApiModels.AnswerResponse answerResponse =
                             pythonClient.answer(policyQuestion, metadata.as_of(), caller);
@@ -85,7 +91,7 @@ public class AssessmentService {
                 }
 
                 results.add(new ApiModels.BatchItem(
-                    doc.document_id(), "COMPLETED", p.extracted(), p.evidence(), policy,
+                    doc.document_id(), "COMPLETED", processed.extracted(), processed.evidence(), policy,
                     true, issues, duplicateOf, null
                 ));
             } catch (PythonClient.ItemDependencyException ex) {
